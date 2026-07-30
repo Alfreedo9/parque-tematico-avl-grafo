@@ -1,0 +1,53 @@
+@import "tailwindcss";
+
+@theme {
+  --font-display: "Fredoka", "Nunito", sans-serif;
+  --font-body: "Nunito", ui-sans-serif, sans-serif;
+
+  /* Marca */
+  --color-primary: #4f46e5;
+  --color-primary-foreground: #ffffff;
+  --color-accent: #ea580c;
+  --color-accent-foreground: #ffffff;
+
+  /* Superficies */
+  --color-surface: #ffffff;
+  --color-surface-muted: #f8fafc;
+  --color-background: #f1f4fb;
+  --color-foreground: #1e1b4b;
+  --color-muted-foreground: #64748b;
+  --color-border: #e2e8f0;
+  --color-destructive: #dc2626;
+
+  /* Colores por zona del parque */
+  --color-zona-aventura: #059669;
+  --color-zona-familiar: #d97706;
+  --color-zona-fantasia: #c026d3;
+  --color-zona-acuatica: #0891b2;
+}
+
+@layer base {
+  body {
+    margin: 0;
+    font-family: var(--font-body);
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+  }
+
+  h1, h2, h3, h4, .font-display {
+    font-family: var(--font-display);
+  }
+
+  ::selection {
+    background-color: var(--color-accent);
+    color: white;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

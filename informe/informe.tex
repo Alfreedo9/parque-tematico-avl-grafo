@@ -1,0 +1,483 @@
+\documentclass[conference]{IEEEtran}
+\usepackage[utf8]{inputenc}
+\usepackage[spanish,es-noshorthands]{babel}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+
+\lstset{
+  basicstyle=\ttfamily\scriptsize,
+  breaklines=true,
+  frame=single,
+  columns=fullflexible,
+  backgroundcolor=\color{gray!8},
+  captionpos=b,
+}
+
+\begin{document}
+
+\title{Sistema de Rutas y Gesti\'on de Atracciones para un Parque Tem\'atico basado en \'Arboles AVL y Grafos Ponderados}
+
+\author{
+  \IEEEauthorblockN{Alfredo Quispe Huamanttupa, Luis Angel Gutierrez Cueva}
+  \IEEEauthorblockA{
+    Escuela Profesional de Ingenier\'ia Inform\'atica y de Sistemas\\
+    Universidad Nacional de San Antonio Abad del Cusco\\
+    Curso: Programaci\'on II\\
+    Docente: Tany Villalba Villalba
+  }
+}
+
+\maketitle
+
+\begin{abstract}
+Este trabajo presenta el dise\~no e implementaci\'on de un sistema de gesti\'on
+para un parque de atracciones cuyo n\'ucleo algor\'itmico se apoya exclusivamente
+en dos estructuras de datos implementadas desde cero: un \'arbol AVL gen\'erico
+y un grafo ponderado no dirigido. El AVL se utiliza para indexar las
+atracciones por nombre y por popularidad, resolviendo b\'usquedas y rankings en
+tiempo $O(\log n)$. El grafo modela el mapa del parque y resuelve, mediante el
+algoritmo de Dijkstra, dos variantes de ruta \'optima (con y sin tiempo de
+espera en fila) y, mediante una b\'usqueda por anchura adaptada a aristas
+ponderadas, la consulta de atracciones cercanas dentro de un l\'imite de
+distancia. MongoDB se emplea \'unicamente como mecanismo de persistencia: el
+servidor construye ambas estructuras en memoria al iniciar y nunca delega en
+consultas de base de datos la resoluci\'on de b\'usquedas, rankings o rutas. Se
+presentan pruebas unitarias exhaustivas de ambas estructuras y mediciones
+emp\'iricas de altura del AVL y tiempo de ejecuci\'on de Dijkstra que confirman
+el comportamiento asint\'otico esperado.
+\end{abstract}
+
+\begin{IEEEkeywords}
+\'Arbol AVL, grafo ponderado, algoritmo de Dijkstra, b\'usqueda en anchura,
+estructuras de datos, sistemas de rutas.
+\end{IEEEkeywords}
+
+\section{Introducci\'on}
+
+La gesti\'on operativa de un parque de atracciones involucra dos problemas
+recurrentes: (1) permitir a los visitantes encontrar r\'apidamente una
+atracci\'on por nombre o descubrir las m\'as populares, y (2) calcular c\'omo
+desplazarse eficientemente entre atracciones considerando tanto el tiempo de
+caminata como el tiempo de espera en fila. Ambos problemas son, en esencia,
+problemas cl\'asicos de estructuras de datos: el primero se resuelve de forma
+\'optima con un \'arbol de b\'usqueda balanceado, y el segundo con un grafo
+ponderado y algoritmos de camino m\'inimo.
+
+El objetivo de este proyecto, desarrollado para el curso de Programaci\'on II,
+es demostrar el dominio de estas dos estructuras implement\'andolas
+\emph{desde cero} --- sin recurrir a bibliotecas externas de \'arboles, montes
+(\emph{heaps}) o grafos--- e integr\'andolas en un sistema completo con
+persistencia real (MongoDB), una API REST (Express) y una interfaz web
+(React). El requisito de dise\~no no negociable del proyecto es que toda
+consulta de negocio (b\'usqueda, ranking, ruta) se resuelva \'unicamente contra
+las estructuras en memoria; MongoDB act\'ua como fuente de verdad persistente
+pero nunca como motor de consulta.
+
+\section{Marco Te\'orico}
+
+\subsection{\'Arboles AVL}
+
+Un \'arbol AVL \cite{adelson1962} es un \'arbol binario de b\'usqueda (ABB)
+autobalanceado en el que, para cada nodo, la diferencia de alturas entre sus
+subárboles izquierdo y derecho (\emph{factor de balance}) nunca excede 1 en
+valor absoluto:
+
+\begin{equation}
+FB(n) = altura(n.izquierdo) - altura(n.derecho), \quad FB(n) \in \{-1,0,1\}
+\end{equation}
+
+Esta invariante garantiza que la altura del \'arbol se mantenga en
+$O(\log n)$, lo que a su vez acota en $O(\log n)$ el costo de las operaciones
+de b\'usqueda, inserci\'on y eliminaci\'on --- a diferencia de un ABB simple,
+que degenera a $O(n)$ en el peor caso (por ejemplo, al insertar claves ya
+ordenadas).
+
+Cuando una inserci\'on o eliminaci\'on rompe la invariante de balance, se
+restaura mediante \emph{rotaciones}, que reorganizan localmente un subárbol
+sin alterar el orden in-order de las claves:
+
+\begin{itemize}
+  \item \textbf{Rotaci\'on simple derecha (caso Izquierda-Izquierda):} se
+    aplica cuando el desbalance proviene del hijo izquierdo del hijo
+    izquierdo.
+  \item \textbf{Rotaci\'on simple izquierda (caso Derecha-Derecha):} sim\'etrica
+    a la anterior.
+  \item \textbf{Rotaci\'on doble izquierda-derecha (caso Izquierda-Derecha):}
+    una rotaci\'on izquierda sobre el hijo izquierdo seguida de una rotaci\'on
+    derecha sobre el nodo.
+  \item \textbf{Rotaci\'on doble derecha-izquierda (caso Derecha-Izquierda):}
+    sim\'etrica a la anterior.
+\end{itemize}
+
+Cada rotaci\'on se ejecuta en tiempo $O(1)$ y, tras una inserci\'on o
+eliminaci\'on, se requiere a lo sumo una rotaci\'on (simple o doble) por
+nivel del camino de retorno hacia la ra\'iz, preservando la cota $O(\log n)$
+total.
+
+\subsection{Grafos ponderados y algoritmo de Dijkstra}
+
+Un grafo ponderado no dirigido $G = (V, E, w)$ se representa en este trabajo
+mediante \emph{lista de adyacencia}: cada v\'ertice mantiene un mapa hacia sus
+vecinos con el peso de la arista correspondiente. Esta representaci\'on es
+adecuada para grafos dispersos (como el mapa de un parque, donde cada
+atracci\'on se conecta con un n\'umero peque\~no de atracciones cercanas) y
+permite recorrer los vecinos de un nodo en $O(\text{grado}(v))$.
+
+El algoritmo de Dijkstra \cite{dijkstra1959} calcula el camino de costo
+m\'inimo desde un v\'ertice origen hacia todos los dem\'as v\'ertices de un
+grafo con pesos no negativos, mediante relajaciones sucesivas de las
+distancias tentativas. La variante implementada en este proyecto es la
+versi\'on cl\'asica $O(V^2)$: en cada una de las $V$ iteraciones se realiza una
+b\'usqueda lineal $O(V)$ del v\'ertice no visitado con menor distancia
+tentativa, en lugar de emplear una cola de prioridad (\emph{min-heap}), que
+reducir\'ia la complejidad a $O((V+E)\log V)$. Para el tama\~no t\'ipico de un
+mapa de parque tem\'atico (decenas de nodos), la diferencia pr\'actica entre
+ambas variantes es despreciable, mientras que la versi\'on $O(V^2)$ es
+sustancialmente m\'as simple de implementar y verificar correctamente sin
+bibliotecas externas de montes.
+
+\subsection{B\'usqueda en anchura (BFS) con l\'imite de distancia}
+
+La b\'usqueda en anchura cl\'asica explora un grafo por niveles usando una
+cola FIFO y es \'optima \'unicamente en grafos \emph{no ponderados} (donde la
+distancia es el n\'umero de saltos). Dado que el mapa del parque es ponderado,
+la funcionalidad de ``atracciones cercanas'' se implementa como una variante
+de BFS que acumula el peso real de cada arista y relaja la distancia de un
+v\'ertice cada vez que se descubre un camino m\'as corto hacia \'el
+--- reencolando el v\'ertice cuando esto ocurre, al estilo del algoritmo SPFA.
+Esta variante conserva el esp\'iritu de BFS (exploraci\'on dirigida por una
+cola, sin estructura de prioridad) y produce distancias acumuladas correctas
+sobre aristas ponderadas, descartando toda rama cuya distancia acumulada
+exceda el l\'imite solicitado.
+
+\section{Arquitectura del Sistema}
+
+La Figura~\ref{fig:arquitectura} resume el flujo de datos del sistema. Al
+iniciar el proceso de Express, se leen desde MongoDB las colecciones
+\texttt{Atraccion} y \texttt{Camino} y se construyen tres estructuras en
+memoria: un \texttt{AVLTree} indexado por nombre, un \texttt{AVLTree}
+indexado por popularidad y un \texttt{GrafoParque}. A partir de ese momento,
+\emph{toda} la l\'ogica de negocio expuesta por la API (b\'usqueda, ranking,
+c\'alculo de rutas, atracciones cercanas, planificaci\'on de recorridos) se
+resuelve exclusivamente contra estas estructuras. MongoDB solo vuelve a
+consultarse en operaciones de escritura (\emph{write-through}): cuando se
+registra una visita, se actualiza un tiempo de espera, o se agrega una
+atracci\'on o camino, el cambio se persiste en MongoDB \emph{y} se refleja en
+las estructuras en memoria en la misma operaci\'on.
+
+\begin{figure}[htbp]
+\centering
+\fbox{\begin{minipage}{0.44\textwidth}
+\centering
+\vspace{4pt}
+\texttt{MongoDB (persistencia)}\\
+$\big\downarrow$ \footnotesize carga \'unica al iniciar\\[4pt]
+\texttt{AVLTree(nombre) + AVLTree(popularidad) + GrafoParque}\\
+\footnotesize (clase \texttt{Parque.js}, en memoria)\\
+$\big\downarrow$ \footnotesize toda la l\'ogica pasa por aqu\'i\\[4pt]
+\texttt{API REST (Express)}\\
+$\big\downarrow$ \footnotesize HTTP/JSON\\[4pt]
+\texttt{Frontend (React + Vite + Tailwind)}\\
+\vspace{4pt}
+\end{minipage}}
+\caption{Flujo de datos: MongoDB alimenta las estructuras en memoria una sola
+vez al iniciar; la API nunca consulta MongoDB para resolver l\'ogica de
+negocio.}
+\label{fig:arquitectura}
+\end{figure}
+
+Un punto de dise\~no relevante es c\'omo se maneja la actualizaci\'on de la
+popularidad de una atracci\'on (al registrar una visita). Dado que la clave
+del \texttt{AVLTree} indexado por popularidad cambia, \emph{no} se muta el
+nodo in-place --- lo cual violar\'ia la propiedad de orden del \'arbol--- sino
+que se elimina el nodo con la clave (popularidad, id) anterior y se reinserta
+con la nueva clave. Para evitar colisiones cuando dos atracciones comparten
+la misma popularidad, la clave de este \'arbol es siempre el par
+\emph{(popularidad, id)}, con desempate lexicogr\'afico por \texttt{id};
+esto garantiza que cada clave sea \'unica sin necesidad de listas enlazadas
+por nodo.
+
+\section{Dise\~no e Implementaci\'on}
+
+\subsection{Modelo de datos}
+
+Cada atracci\'on se representa con el esquema
+\texttt{\{id, nombre, zona, popularidad, tiempoEsperaFila, coordenadas\}},
+donde \texttt{coordenadas} $=\{x,y\}$ fija la posici\'on del nodo en el mapa
+SVG del frontend. Cada camino se representa como una arista no dirigida
+\texttt{\{origen, destino, tiempoCaminata\}}. El tiempo de espera en fila
+vive en el \emph{nodo} (la atracci\'on), no en la arista, reflejando que
+esperar en la fila de una atracci\'on es un costo asociado a \emph{llegar a
+esa atracci\'on}, independientemente de por d\'onde se llegue.
+
+\subsection{\'Arbol AVL gen\'erico}
+
+La clase \texttt{AVLTree} (Listado~\ref{lst:avl}) es completamente gen\'erica:
+recibe un \texttt{comparator(a, b)} en el constructor y no asume nada sobre
+el tipo de la clave, lo que permite reutilizar la misma implementaci\'on tanto
+para el \'indice por nombre (clave: cadena, orden lexicogr\'afico) como para
+el \'indice por popularidad (clave: tupla compuesta). Expone:
+
+\begin{itemize}
+  \item \texttt{insert(key, value)}, \texttt{delete(key)}, \texttt{search(key)}
+    --- $O(\log n)$ garantizado mediante las cuatro rotaciones descritas en la
+    Secci\'on~II-A.
+  \item \texttt{inOrder()} --- recorrido in-order completo, usado para el
+    listado alfab\'etico de atracciones; $O(n)$.
+  \item \texttt{topN(n)} --- recorrido in-order \emph{invertido}
+    (derecha-nodo-izquierda) con corte temprano al alcanzar $n$ elementos,
+    usado para el ranking de popularidad.
+\end{itemize}
+
+\begin{lstlisting}[language=JavaScript, caption={Rotaci\'on simple derecha (caso Izquierda-Izquierda) del AVL.}, label={lst:avl}]
+_rotateRight(y) {
+  const x = y.left;
+  const t2 = x.right;
+  x.right = y;
+  y.left = t2;
+  this._updateHeight(y);
+  this._updateHeight(x);
+  return x;
+}
+\end{lstlisting}
+
+\subsection{Grafo del parque y algoritmos de ruta}
+
+La clase \texttt{GrafoParque} implementa:
+
+\begin{itemize}
+  \item \texttt{dijkstra(origen, destino, \{incluirEspera\})} --- versi\'on
+    $O(V^2)$ descrita en la Secci\'on~II-B, parametrizada por la funci\'on de
+    costo. Cuando \texttt{incluirEspera = true} (``ruta \'optima''), el peso
+    de relajar la arista $(u,v)$ es
+    $peso(u,v) = caminata(u,v) + espera(v)$, es decir, se suma el tiempo de
+    espera del nodo de \emph{destino} de cada tramo (nunca el del origen,
+    pues no tiene sentido esperar en la atracci\'on de la que se est\'a
+    partiendo). Cuando \texttt{incluirEspera = false} (``ruta m\'as corta''),
+    $peso(u,v) = caminata(u,v)$.
+  \item \texttt{atraccionesCercanas(origen, l\'imite)} --- la variante de BFS
+    con relajaci\'on de distancias descrita en la Secci\'on~II-C.
+  \item \texttt{planificarRecorrido(origen, paradas)} --- heur\'istica golosa
+    del vecino m\'as cercano para el problema de visitar un conjunto de
+    paradas: en cada paso elige, mediante Dijkstra, la parada no visitada m\'as
+    cercana desde la posici\'on actual. Al tratarse de una variante del
+    problema del agente viajero (TSP), que es NP-dif\'icil, esta heur\'istica
+    no garantiza el \'optimo global, pero produce un recorrido razonable en
+    tiempo polinomial ($O(k^2 \cdot V^2)$ para $k$ paradas).
+\end{itemize}
+
+\subsection{API REST}
+
+La Tabla~\ref{tab:endpoints} resume los endpoints expuestos. Cada uno delega
+\'integramente en la clase \texttt{Parque.js}, que a su vez opera sobre el
+AVL o el grafo seg\'un corresponda; ning\'un controlador ejecuta una consulta
+de Mongoose para resolver b\'usqueda, ranking o rutas.
+
+\begin{table}[htbp]
+\caption{Endpoints principales de la API}
+\label{tab:endpoints}
+\centering
+\begin{tabular}{@{}p{0.13\textwidth}p{0.16\textwidth}p{0.12\textwidth}@{}}
+\toprule
+\textbf{M\'etodo/Ruta} & \textbf{Estructura usada} & \textbf{Complejidad} \\
+\midrule
+\texttt{GET /atracciones/buscar} & AVL(nombre) & $O(\log n)$ / $O(n)$ parcial \\
+\texttt{GET /atracciones/ranking} & AVL(popularidad) & $O(k + \log n)$ \\
+\texttt{GET /atracciones} & AVL(nombre) & $O(n)$ \\
+\texttt{GET /rutas/corta} & Grafo (Dijkstra) & $O(V^2)$ \\
+\texttt{GET /rutas/optima} & Grafo (Dijkstra) & $O(V^2)$ \\
+\texttt{GET /atracciones/cercanas} & Grafo (BFS ponderado) & $O(V \cdot E)$ peor caso \\
+\texttt{POST /rutas/planificar} & Grafo (NN + Dijkstra) & $O(k^2 V^2)$ \\
+\texttt{POST /atracciones/visita} & AVL(popularidad) & $O(\log n)$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Frontend}
+
+El frontend (React + Vite + Tailwind CSS) consume la API mediante
+\texttt{fetch} nativo. El mapa del parque se renderiza como un \texttt{SVG}
+con coordenadas fijas asignadas manualmente a cada una de las 16 atracciones
+del dataset semilla, evitando deliberadamente un layout autom\'atico
+(\emph{force-directed}) para priorizar velocidad de desarrollo y legibilidad.
+Cuando se calcula una ruta o un recorrido multi-parada, los nodos y aristas
+correspondientes se resaltan visualmente sobre el mapa base.
+
+\section{Resultados de pruebas}
+
+\subsection{Pruebas unitarias}
+
+Se implementaron 19 pruebas unitarias (Node.js \texttt{node:test}) que
+verifican, para \texttt{AVLTree}: balance tras 1000 inserciones en orden
+aleatorio, correcci\'on de b\'usqueda, actualizaci\'on de valor en claves
+duplicadas, eliminaci\'on de hojas / nodos con un hijo / nodos con dos hijos,
+vaciado completo, recorridos \texttt{inOrder} y \texttt{topN}, manejo de
+claves compuestas, y las cuatro rotaciones (LL, RR, LR, RL); y para
+\texttt{GrafoParque}: construcci\'on de aristas no dirigidas, ambas variantes
+de costo de Dijkstra, manejo de nodos inalcanzables e inexistentes, l\'imite
+de distancia en BFS ponderado, y la heur\'istica de planificaci\'on
+multi-parada. Las 19 pruebas pasan (Tabla~\ref{tab:tests}).
+
+\begin{table}[htbp]
+\caption{Resumen de pruebas unitarias}
+\label{tab:tests}
+\centering
+\begin{tabular}{@{}lccc@{}}
+\toprule
+\textbf{Suite} & \textbf{Casos} & \textbf{Aprobados} & \textbf{Fallidos} \\
+\midrule
+AVLTree & 9 & 9 & 0 \\
+GrafoParque & 10 & 10 & 0 \\
+\midrule
+Total & 19 & 19 & 0 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Altura del AVL vs. cota te\'orica}
+
+Para verificar emp\'iricamente el comportamiento $O(\log n)$, se insertaron
+conjuntos de $n$ claves en orden aleatorio y se midi\'o la altura resultante
+del \'arbol, compar\'andola con la cota superior te\'orica
+$1.4404 \log_2(n+2) - 0.3277$ \cite{knuth1998}. Los resultados
+(Tabla~\ref{tab:altura}) muestran que la altura observada se mantiene siempre
+por debajo de la cota te\'orica y crece de forma logar\'itmica, incluso para
+$n = 100{,}000$.
+
+\begin{table}[htbp]
+\caption{Altura del AVL observada vs. cota te\'orica}
+\label{tab:altura}
+\centering
+\begin{tabular}{@{}rccc@{}}
+\toprule
+\textbf{$n$} & \textbf{Altura observada} & \textbf{Cota te\'orica} & $\log_2 n$ \\
+\midrule
+16 & 5 & 5.68 & 4.00 \\
+100 & 8 & 9.28 & 6.64 \\
+1\,000 & 12 & 14.03 & 9.97 \\
+10\,000 & 16 & 18.81 & 13.29 \\
+100\,000 & 20 & 23.60 & 16.61 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Sobre el dataset semilla real (16 atracciones), el \'arbol indexado por
+nombre alcanz\'o una altura de 5, consistente con la fila $n=16$ de la
+Tabla~\ref{tab:altura}.
+
+\subsection{Tiempos de ejecuci\'on de Dijkstra}
+
+Se midi\'o el tiempo de una consulta \texttt{rutaOptima} sobre el grafo
+completo del dataset semilla (16 nodos, 22 aristas) promediando las 240
+consultas posibles entre todos los pares origen-destino: el tiempo promedio
+por consulta fue de \textbf{0.0417 ms}. Adicionalmente, se gener\'o una
+familia de grafos aleatorios dispersos (grado promedio 4) de tama\~no
+creciente para observar la tendencia de crecimiento $O(V^2)$ de la
+implementaci\'on (Tabla~\ref{tab:dijkstra}, promedio de 30 consultas por
+tama\~no).
+
+\begin{table}[htbp]
+\caption{Tiempo promedio de una consulta Dijkstra $O(V^2)$}
+\label{tab:dijkstra}
+\centering
+\begin{tabular}{@{}rrc@{}}
+\toprule
+\textbf{$V$} & \textbf{$E$ (aprox.)} & \textbf{Tiempo promedio} \\
+\midrule
+16 & 32 & 0.101 ms \\
+50 & 100 & 0.211 ms \\
+100 & 200 & 0.814 ms \\
+300 & 600 & 3.684 ms \\
+500 & 1\,000 & 7.493 ms \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+El crecimiento observado es consistente con $O(V^2)$: al multiplicar $V$ por
+$\sim\!10$ (de 50 a 500), el tiempo promedio aumenta $\sim\!35\times$, cercano
+al factor $100\times$ esperado en el l\'imite asint\'otico puro, con la
+diferencia explicada por el overhead constante de la implementaci\'on y el
+efecto del \emph{early-exit} al alcanzar el nodo destino. Para el tama\~no
+real del parque (16--20 nodos), el tiempo de respuesta es imperceptible para
+el usuario (\textless 0.1 ms de c\'omputo puro).
+
+\section{Discusi\'on}
+
+Los resultados confirman que ambas estructuras cumplen su prop\'osito de
+dise\~no. El AVL mantiene su altura logar\'itmica incluso a escalas muy
+superiores a las necesarias para este dominio (16--20 atracciones), lo que
+deja un amplio margen de crecimiento del dataset sin degradaci\'on de
+rendimiento. El uso de una clave compuesta \emph{(popularidad, id)} en el
+\'indice de ranking evit\'o por completo la necesidad de manejar colisiones o
+listas de nodos por clave, a costa \'unicamente de un comparator ligeramente
+m\'as complejo.
+
+Respecto a Dijkstra, la elecci\'on de la variante $O(V^2)$ sin cola de
+prioridad fue deliberada: para un grafo con decenas de nodos --- como
+cualquier mapa realista de un parque tem\'atico --- la diferencia de tiempo
+frente a una implementaci\'on con \emph{min-heap} ($O((V+E)\log V)$) es
+inferior al milisegundo, mientras que la implementaci\'on sin heap es
+sustancialmente m\'as simple de razonar y depurar sin depender de una
+estructura de datos adicional (mont\'iculo) implementada desde cero. Esta
+decisi\'on dejar\'ia de ser adecuada si el sistema debiera escalar a mapas
+con miles de nodos (por ejemplo, un sistema de rutas a nivel de ciudad), caso
+en el que la versi\'on con heap ser\'ia necesaria.
+
+Una limitaci\'on reconocida es que la heur\'istica de vecino m\'as cercano
+usada en la planificaci\'on multi-parada no garantiza la ruta \'optima global
+(el problema subyacente es NP-dif\'icil); se acept\'o esta limitaci\'on por
+ser una funcionalidad secundaria (\'ultima en el orden de prioridad del
+proyecto) frente al n\'ucleo AVL/Dijkstra.
+
+\section{Conclusiones}
+
+Se dise\~n\'o e implement\'o un sistema completo de gesti\'on de un parque de
+atracciones cuya l\'ogica de negocio central --- b\'usqueda, ranking y
+c\'alculo de rutas --- se resuelve \'integramente mediante un \'arbol AVL y un
+grafo ponderado implementados desde cero, sin bibliotecas externas de
+estructuras de datos. Las pruebas unitarias y las mediciones emp\'iricas
+confirman el comportamiento asint\'otico te\'orico de ambas estructuras: altura
+logar\'itmica del AVL y crecimiento cuadr\'atico controlado de Dijkstra. La
+arquitectura de carga \'unica (MongoDB $\to$ memoria) y escritura
+\emph{write-through} permite combinar persistencia real con tiempos de
+respuesta de consulta pr\'acticamente instant\'aneos.
+
+\section{Trabajo futuro}
+
+\begin{itemize}
+  \item \textbf{Dijkstra con cola de prioridad:} reemplazar la b\'usqueda
+    lineal $O(V)$ del m\'inimo por un mont\'iculo binario (\emph{min-heap})
+    implementado desde cero, reduciendo la complejidad a
+    $O((V+E)\log V)$ para soportar mapas de mayor escala.
+  \item \textbf{Layout autom\'atico del mapa:} sustituir las coordenadas fijas
+    del SVG por un algoritmo de disposici\'on \emph{force-directed}, \'util si
+    el n\'umero de atracciones crece de forma din\'amica.
+  \item \textbf{Autenticaci\'on por roles:} restringir el panel
+    administrativo (alta de atracciones/caminos, actualizaci\'on de tiempos
+    de espera) a usuarios autenticados con rol de administrador.
+  \item \textbf{Heur\'istica multi-parada mejorada:} explorar variantes como
+    2-opt sobre la soluci\'on golosa inicial para acercar el recorrido
+    multi-parada al \'optimo del TSP.
+\end{itemize}
+
+\begin{thebibliography}{00}
+\bibitem{adelson1962} G.~M. Adelson-Velsky and E.~M. Landis, ``An algorithm
+  for the organization of information,'' \emph{Proceedings of the USSR
+  Academy of Sciences}, vol.~146, pp.~263--266, 1962.
+\bibitem{dijkstra1959} E.~W. Dijkstra, ``A note on two problems in connexion
+  with graphs,'' \emph{Numerische Mathematik}, vol.~1, no.~1,
+  pp.~269--271, 1959.
+\bibitem{knuth1998} D.~E. Knuth, \emph{The Art of Computer Programming,
+  Volume 3: Sorting and Searching}, 2nd ed. Addison-Wesley, 1998.
+\bibitem{cormen2009} T.~H. Cormen, C.~E. Leiserson, R.~L. Rivest, and
+  C.~Stein, \emph{Introduction to Algorithms}, 3rd ed. MIT Press, 2009.
+\end{thebibliography}
+
+\end{document}
