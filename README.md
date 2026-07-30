@@ -6,6 +6,18 @@ desde cero — para resolver búsqueda/ranking de atracciones y cálculo de ruta
 óptimas. MongoDB solo se usa como persistencia (carga inicial + write-through);
 ninguna búsqueda, ranking o ruta se resuelve con queries de Mongo.
 
+## En producción
+
+| Componente | URL |
+|---|---|
+| Frontend | https://parque-tematico-avl-grafo.vercel.app |
+| API (backend) | https://parque-backend-c4re.onrender.com/api |
+| Repositorio | https://github.com/Alfreedo9/parque-tematico-avl-grafo |
+
+Backend en [Render](https://render.com) (free tier) + frontend en [Vercel](https://vercel.com) + base de datos en [MongoDB Atlas](https://www.mongodb.com/atlas). Cada `git push` a `master` redespliega ambos automáticamente.
+
+> El backend en Render se "duerme" tras ~15 min sin tráfico; la primera petición después de eso tarda 30-50s en responder mientras despierta.
+
 ## Arquitectura
 
 ```
@@ -79,7 +91,20 @@ Ver `backend/src/routes/*.routes.js`. Resumen:
 - `GET /api/atracciones/cercanas?id=&limite=` — BFS/SPFA con límite de distancia
 - `POST /api/rutas/planificar` — recorrido multi-parada (vecino más cercano)
 - `POST /api/atracciones/visita` — incrementa popularidad (remove+reinsert en AVL)
-- `POST /api/atracciones`, `PUT /api/atracciones/:id/espera`, `POST /api/caminos` — administración
+- `POST /api/atracciones` — crear atracción
+- `PUT /api/atracciones/:id` — editar atracción (nombre, zona, ubicación, espera)
+- `DELETE /api/atracciones/:id` — eliminar atracción (elimina en cascada sus caminos)
+- `POST /api/caminos` — agregar camino (arista no dirigida)
+
+## Despliegue
+
+Para replicar el despliegue en tu propia cuenta:
+
+**Backend (Render)**: New → Web Service → conectar el repo → Root Directory `backend` → Build Command `npm install` → Start Command `npm start` → variable de entorno `MONGODB_URI`.
+
+**Frontend (Vercel)**: Add New → Project → conectar el repo → Root Directory `frontend` → variable de entorno `VITE_API_URL` = `https://<tu-backend>.onrender.com/api`.
+
+En MongoDB Atlas, en "Network Access", agrega `0.0.0.0/0` (Allow Access from Anywhere) como regla **permanente** (no temporal) — si no, tanto Render como cualquier IP que cambie con el tiempo se quedan fuera.
 
 ## Informe
 

@@ -204,6 +204,35 @@ la misma popularidad, la clave de este \'arbol es siempre el par
 esto garantiza que cada clave sea \'unica sin necesidad de listas enlazadas
 por nodo.
 
+\subsection{Despliegue en producci\'on}
+
+El sistema se encuentra desplegado y accesible p\'ublicamente, replicando en
+la nube la misma arquitectura de tres capas de la Figura~\ref{fig:arquitectura}:
+
+\begin{itemize}
+  \item \textbf{Backend (API Express):} desplegado en Render
+    (\url{https://render.com}) como \emph{web service} gratuito. Se construye
+    con \texttt{npm install} y se ejecuta con \texttt{npm start}; la variable
+    de entorno \texttt{MONGODB\_URI} apunta al cl\'uster de MongoDB Atlas.
+  \item \textbf{Frontend (React):} desplegado en Vercel
+    (\url{https://vercel.com}) como sitio est\'atico, generado con
+    \texttt{npm run build}. La variable de entorno \texttt{VITE\_API\_URL},
+    fijada en tiempo de \emph{build}, apunta a la URL p\'ublica del backend.
+  \item \textbf{Base de datos:} MongoDB Atlas (tier gratuito M0), con la regla
+    de red \texttt{0.0.0.0/0} habilitada para aceptar conexiones desde las
+    direcciones IP din\'amicas de Render.
+\end{itemize}
+
+Cada \texttt{git push} a la rama principal del repositorio dispara un
+redespliegue autom\'atico tanto en Render como en Vercel (integraci\'on
+continua provista por ambas plataformas sobre el mismo repositorio de
+GitHub), sin necesidad de configuraci\'on adicional de CI/CD. Una limitaci\'on
+conocida del tier gratuito de Render es que el proceso se suspende tras
+\textasciitilde15 minutos de inactividad; la primera solicitud posterior a la
+suspensi\'on tarda 30--50 segundos en responder mientras el servicio se
+reactiva, lo cual es aceptable para un proyecto acad\'emico pero no para un
+entorno de producci\'on real.
+
 \section{Dise\~no e Implementaci\'on}
 
 \subsection{Modelo de datos}
