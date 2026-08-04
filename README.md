@@ -78,6 +78,12 @@ ni variables de entorno para desarrollo local.
 con tiempos de caminata y espera inventados pero realistas. Ver
 `backend/scripts/seed.js`.
 
+## Gestionar atracciones desde la consola
+
+Para ver, crear, editar o eliminar atracciones sin pasar por el frontend (con
+`curl`, la consola del navegador o PowerShell), sigue
+[`docs/guia-consola.md`](docs/guia-consola.md).
+
 ## Endpoints principales
 
 Ver `backend/src/routes/*.routes.js`. Resumen:
