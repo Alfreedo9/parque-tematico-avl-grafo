@@ -6,7 +6,12 @@ import mongoose from 'mongoose';
 // y ese proxy local rechaza las consultas SRV que necesita mongodb+srv://,
 // aunque `nslookup` funcione con normalidad. Forzar servidores DNS públicos
 // evita el problema sin depender de la configuración de red del equipo.
-dns.setServers(['8.8.8.8', '1.1.1.1']);
+// Solo se aplica en local: en Render (y contenedores similares) las consultas
+// DNS salientes a servidores externos arbitrarios quedan bloqueadas, así que
+// forzar 8.8.8.8/1.1.1.1 ahí produce el error opuesto (querySrv ETIMEOUT).
+if (!process.env.RENDER) {
+  dns.setServers(['8.8.8.8', '1.1.1.1']);
+}
 
 export async function conectarDB(uri) {
   mongoose.set('strictQuery', true);
